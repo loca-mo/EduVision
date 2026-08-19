@@ -42,7 +42,7 @@ class RaisedHandDetector:
             "gesture": "raised_hand" if raised else "none",
             "is_raised": raised,
         }
-        from src.computer_vision.raised_hand import RaisedHandDetector
+        from src.computer_vision.hand_gesture import RaisedHandDetector
 
 
 def test_no_hand():

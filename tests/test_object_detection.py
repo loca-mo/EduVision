@@ -2,7 +2,7 @@ import cv2
 
 from src.computer_vision.object_detection import ObjectDetector
 from src.computer_vision.hand_detection import HandDetector
-from src.computer_vision.raised_hand import RaisedHandDetector
+from src.computer_vision.hand_gesture import RaisedHandDetector
 from src.computer_vision.event_detection import EventDetector
 
 

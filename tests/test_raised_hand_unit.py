@@ -1,4 +1,4 @@
-from src.computer_vision.raised_hand import RaisedHandDetector
+from src.computer_vision.hand_gesture import RaisedHandDetector
 
 
 def test_no_hand():
