@@ -4,6 +4,7 @@ from src.computer_vision.object_detection import ObjectDetector
 from src.computer_vision.hand_detection import HandDetector
 from src.computer_vision.hand_gesture import RaisedHandDetector
 from src.computer_vision.event_detection import EventDetector
+from src.computer_vision.distraction_detection import DistractionDetector
 
 
 object_detector = ObjectDetector(
@@ -14,8 +15,11 @@ object_detector = ObjectDetector(
 hand_detector = HandDetector()
 raised_hand_detector = RaisedHandDetector()
 
+distraction_detector = DistractionDetector()
+
 event_detector = EventDetector(
-    raised_hand_detector=raised_hand_detector
+    raised_hand_detector=raised_hand_detector,
+    distraction_detector=distraction_detector,
 )
 
 cap = cv2.VideoCapture(0)
