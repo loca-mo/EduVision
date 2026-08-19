@@ -1,40 +1,47 @@
 import streamlit as st
- 
+
+#######################
+# Page configuration
 st.set_page_config(
     page_title="EduVision",
     page_icon="🎓",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="expanded"
 )
- 
-# ---------------------------------------------------------------------------
-# Initialize state shared across all pages (used by any team module)
-# ---------------------------------------------------------------------------
-if "current_subject" not in st.session_state:
-    st.session_state["current_subject"] = None
-if "current_user" not in st.session_state:
-    st.session_state["current_user"] = "guest"
- 
-# ---------------------------------------------------------------------------
-# Register pages in a clear order (mine + the team's)
-# Update your teammates' filenames here if they differ from what's expected
-# ---------------------------------------------------------------------------
-pages = {
-    "Home": [
-        st.Page("pages/Dashboard.py", title="Dashboard", icon="🏠"),
-    ],
-    "My part (OCR + Attendance + Events + Reports)": [
-        st.Page("pages/OCR_Notes.py", title="Blackboard Reading", icon="📝"),
-        st.Page("pages/Attendance.py", title="Attendance", icon="✅"),
-        st.Page("pages/Interaction.py", title="Events", icon="⚡"),
-        st.Page("pages/Reports.py", title="Reports", icon="📊"),
-    ],
-    "Team modules": [
-        st.Page("pages/Live_AI.py", title="Live AI Analysis", icon="🤖"),
-        st.Page("pages/Settings.py", title="Settings", icon="⚙️"),
-    ],
-}
- 
-pg = st.navigation(pages)
+
+#######################
+# Pages (linked to your existing files in src/dashboard/pages)
+dashboard_page = st.Page("pages/Dashboard.py", title="Dashboard", icon="📊", default=True)
+attendance_page = st.Page("pages/Attendance.py", title="Attendance", icon="🧍")
+interaction_page = st.Page("pages/Interaction.py", title="Interaction", icon="💬")
+live_ai_page = st.Page("pages/Live_AI.py", title="Live AI", icon="🎥")
+ocr_notes_page = st.Page("pages/OCR_Notes.py", title="OCR Notes", icon="📝")
+ai_assistant = st.Page("pages/AI_Assistant.py", title="AI & Voice Assistant", icon="🤖")
+reports_page = st.Page("pages/Reports.py", title="Reports", icon="📄")
+settings_page = st.Page("pages/Settings.py", title="Settings", icon="⚙️")
+
+pg = st.navigation(
+    {
+        "Overview": [dashboard_page],
+        "Classroom": [attendance_page, interaction_page, live_ai_page, ocr_notes_page, ai_assistant],
+        "Insights": [reports_page],
+        "App": [settings_page],
+    }
+)
+
+#######################
+# Sidebar
+with st.sidebar:
+    st.title("🎓 EduVision")
+    st.caption("Smart classroom monitoring & reporting")
+
+    st.subheader("Team")
+    st.markdown(
+        " Malak Hossam\n"
+        " Roqaya Mohamed\n"
+        " Sara Elsayed"
+    )
+
+#######################
+# Run selected page
 pg.run()
- 
