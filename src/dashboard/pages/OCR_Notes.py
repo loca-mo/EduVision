@@ -1,24 +1,35 @@
-"""
-OCR Notes Page
---------------
-Allows users to:
-
-1. Upload an image.
-2. Extract text using EasyOCR.
-3. Review and edit the extracted text.
-4. Save the OCR result as a note.
-5. Display previously saved OCR notes.
-"""
-
 import sys
 from pathlib import Path
+
+import numpy as np
+import streamlit as st
+from PIL import Image
 
 
 # ===========================================================================
 # Make src/ available for imports
 # ===========================================================================
 
-SRC_DIR = Path(__file__).resolve().parents[2]
+# Find the project src directory robustly.
+CURRENT_DIR = Path(__file__).resolve()
+SRC_DIR = None
+
+for parent in [CURRENT_DIR.parent, *CURRENT_DIR.parents]:
+    candidate = parent / "utils"
+
+    if candidate.exists():
+        SRC_DIR = parent
+        break
+
+
+if SRC_DIR is None:
+    # Fallback for projects where this page is already inside src/.
+    SRC_DIR = (
+        CURRENT_DIR.parents[1]
+        if len(CURRENT_DIR.parents) > 1
+        else CURRENT_DIR.parent
+    )
+
 
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
@@ -28,9 +39,16 @@ if str(SRC_DIR) not in sys.path:
 # Imports
 # ===========================================================================
 
-import streamlit as st
-import easyocr
-from PIL import Image
+try:
+    import easyocr
+
+except ImportError:
+    st.error(
+        "EasyOCR is not installed. Run:\n\n"
+        "pip install easyocr"
+    )
+    st.stop()
+
 
 from utils.data_manager import (
     save_ocr_note,
@@ -84,10 +102,20 @@ def get_ocr_reader(language):
     else:
         languages = ["en"]
 
-    return easyocr.Reader(
-        languages,
-        gpu=False,
-    )
+    try:
+        return easyocr.Reader(
+            languages,
+            gpu=False,
+            verbose=False,
+        )
+
+    except TypeError:
+        # Compatibility with EasyOCR versions
+        # that do not support verbose.
+        return easyocr.Reader(
+            languages,
+            gpu=False,
+        )
 
 
 # ===========================================================================
@@ -118,6 +146,7 @@ if uploaded_file is not None:
     try:
 
         image = Image.open(uploaded_file)
+        image.load()
 
     except Exception as e:
 
@@ -189,6 +218,20 @@ if uploaded_file is not None:
 
 
                 # -----------------------------------------------------------
+                # Convert PIL image to NumPy array
+                #
+                # EasyOCR does NOT accept a PIL Image directly.
+                # It accepts:
+                # - file path
+                # - URL
+                # - bytes
+                # - NumPy array
+                # -----------------------------------------------------------
+
+                image_array = np.array(image_rgb)
+
+
+                # -----------------------------------------------------------
                 # Get OCR reader
                 # -----------------------------------------------------------
 
@@ -200,9 +243,10 @@ if uploaded_file is not None:
                 # -----------------------------------------------------------
 
                 results = reader.readtext(
-                    image_rgb,
+                    image_array,
                     detail=0,
                     paragraph=True,
+                    batch_size=1,
                 )
 
 
@@ -280,13 +324,17 @@ if (
     # Note title
     # -----------------------------------------------------------------------
 
-    note_title = st.text_input(
-        "Note title",
+    col1, col2 = st.columns(2)
 
-        value="OCR Note",
+    with col1:
 
-        placeholder="Enter a title for this note",
-    )
+        note_title = st.text_input(
+            "Note title",
+
+            value="OCR Note",
+
+            placeholder="Enter a title for this note",
+        )
 
 
     # -----------------------------------------------------------------------
@@ -316,7 +364,6 @@ if (
 
                 save_ocr_note(
                     subject=cleaned_title or "OCR Note",
-
                     extracted_text=cleaned_text,
                 )
 
@@ -408,8 +455,15 @@ try:
             )
 
 
+            display_timestamp = (
+                str(timestamp).strip()
+                if timestamp
+                else "Saved note"
+            )
+
+
             with st.expander(
-                f"📝 {title} — {timestamp}",
+                f"📝 {title} — {display_timestamp}",
                 expanded=False,
             ):
 

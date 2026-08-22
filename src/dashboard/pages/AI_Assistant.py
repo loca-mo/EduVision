@@ -1,5 +1,5 @@
 import io
-from pathlib import Path
+from typing import Dict, List, Optional
 
 import streamlit as st
 from gtts import gTTS
@@ -8,43 +8,46 @@ from google import genai
 from google.genai import types
 
 
-# NOTE: st.set_page_config() is NOT called here — app.py already calls
-# it once for the whole multipage app.
-
-
 # ============================================================
-# CONSTANTS
+# PAGE / APP CONFIG
 # ============================================================
+# NOTE: st.set_page_config() is intentionally not called here
+# because app.py already calls it for the multipage application.
 
 MODEL_NAME = "gemini-3.6-flash"
+MAX_HISTORY_MESSAGES = 20
+MAX_OUTPUT_TOKENS = 900
+TEMPERATURE = 0.35
 
 SYSTEM_INSTRUCTION = """
-You are EduVision AI, an intelligent classroom analytics assistant.
+You are EduVision AI, an intelligent classroom assistant for teachers.
 
-Your job is to help teachers with:
+Your responsibilities include:
 - Student attendance
 - Student performance
 - Classroom analytics
 - Notes and OCR content
-- Learning difficulties
+- Learning support
 - Student progress
 - Reports
-- General educational questions
+- Educational questions
 
-Rules:
-1. Be clear, concise, and professional.
-2. Give practical answers that are useful to teachers.
-3. If the teacher asks about student data that has not been provided,
-   clearly say that you do not have access to that data.
-4. Never invent student names, grades, attendance percentages,
-   or other classroom statistics.
-5. When analyzing numbers, explain the result simply.
-6. Protect student privacy.
-7. If asked to summarize something, use bullet points when appropriate.
-8. If the question is unrelated to education/classroom analytics,
-   you can still answer helpfully, but keep the response concise.
-9. Do not claim that you performed an action if you did not actually
-   perform it.
+Response rules:
+1. Be clear, concise, professional, and practical.
+2. Use the classroom data supplied in the conversation when it is available.
+3. Never invent student names, grades, attendance values, statistics, or events.
+4. If required information is missing, explicitly say what is missing.
+5. When numbers are provided, reason from those numbers and explain important results simply.
+6. Separate observed facts from recommendations.
+7. Protect student privacy. Do not expose unnecessary personal information.
+8. Do not diagnose medical, psychological, or learning disorders. If a concern is mentioned,
+   recommend appropriate teacher/school support instead.
+9. When comparing students or groups, use a compact table when useful.
+10. For recommendations, give concrete actions a teacher can take.
+11. If asked to summarize, prefer headings and bullet points.
+12. If the question is unrelated to education, answer briefly and helpfully.
+13. Never claim to have uploaded, saved, analyzed, or performed an action unless it actually happened.
+14. If the available data is insufficient to make a reliable conclusion, say so.
 """
 
 
@@ -52,24 +55,23 @@ Rules:
 # GEMINI CLIENT
 # ============================================================
 
-@st.cache_resource
+@st.cache_resource(show_spinner=False)
 def get_gemini_client():
-    """
-    Create and cache the Gemini client.
-
-    The API key is loaded from:
-    .streamlit/secrets.toml
-    """
-
-    if "GEMINI_API_KEY" not in st.secrets:
+    """Create and cache the Gemini client using Streamlit secrets."""
+    try:
+        api_key = st.secrets["GEMINI_API_KEY"]
+    except Exception:
         st.error(
-            "GEMINI_API_KEY was not found in Streamlit secrets."
+            "GEMINI_API_KEY was not found. Add it to "
+            ".streamlit/secrets.toml before using EduVision AI."
         )
         st.stop()
 
-    return genai.Client(
-        api_key=st.secrets["GEMINI_API_KEY"]
-    )
+    if not api_key or not str(api_key).strip():
+        st.error("GEMINI_API_KEY is empty. Please check your Streamlit secrets.")
+        st.stop()
+
+    return genai.Client(api_key=api_key)
 
 
 client = get_gemini_client()
@@ -79,110 +81,131 @@ client = get_gemini_client()
 # SESSION STATE
 # ============================================================
 
-if "messages" not in st.session_state:
+def initialize_state() -> None:
+    if "messages" not in st.session_state:
+        st.session_state.messages = [
+            {
+                "role": "assistant",
+                "content": (
+                    "👋 **Hello! I’m EduVision AI.**\n\n"
+                    "I can help you understand classroom data, attendance, "
+                    "performance, notes, progress, and reports.\n\n"
+                    "Ask me a question below to get started."
+                ),
+            }
+        ]
 
-    st.session_state.messages = [
-        {
-            "role": "assistant",
-            "content": (
-                "👋 Hello! I am EduVision AI. "
-                "I can help you analyze classroom information, "
-                "attendance, performance, notes, and reports. "
-                "How can I help?"
-            ),
-        }
-    ]
+    if "last_response_audio" not in st.session_state:
+        st.session_state.last_response_audio = None
+
+    if "last_response_text" not in st.session_state:
+        st.session_state.last_response_text = ""
 
 
-# ============================================================
-# TEXT TO SPEECH
-# ============================================================
-
-def text_to_speech(text: str):
-    """
-    Convert AI response text into MP3 audio.
-    """
-
-    try:
-        tts = gTTS(
-            text=text,
-            lang="en",
-            slow=False,
-        )
-
-        audio_buffer = io.BytesIO()
-
-        tts.write_to_fp(audio_buffer)
-
-        audio_buffer.seek(0)
-
-        return audio_buffer
-
-    except Exception:
-        return None
+initialize_state()
 
 
 # ============================================================
-# BUILD GEMINI HISTORY
+# HELPERS
 # ============================================================
 
-def build_gemini_history(messages):
-    """
-    Convert Streamlit chat history into Gemini Content objects.
-    """
+def trim_history(messages: List[Dict[str, str]]) -> List[Dict[str, str]]:
+    """Keep the prompt reasonably small while preserving the welcome message."""
+    if len(messages) <= MAX_HISTORY_MESSAGES + 1:
+        return messages
 
-    contents = []
+    first = messages[:1]
+    recent = messages[-MAX_HISTORY_MESSAGES:]
+    return first + recent
 
-    for message in messages:
 
-        role = message["role"]
+def build_gemini_history(messages: List[Dict[str, str]]) -> List[types.Content]:
+    """Convert Streamlit messages into Gemini Content objects."""
+    contents: List[types.Content] = []
 
-        # Gemini uses "model" instead of "assistant"
+    for message in trim_history(messages):
+        role = message.get("role", "")
+        content = str(message.get("content", "")).strip()
+
+        if not content:
+            continue
+
         if role == "assistant":
             role = "model"
+        elif role != "user":
+            continue
 
         contents.append(
             types.Content(
                 role=role,
-                parts=[
-                    types.Part.from_text(
-                        text=message["content"]
-                    )
-                ],
+                parts=[types.Part.from_text(text=content)],
             )
         )
 
     return contents
 
 
-# ============================================================
-# GEMINI RESPONSE
-# ============================================================
-
-def get_ai_response(messages):
-    """
-    Send the conversation to Gemini and return the response.
-    """
-
+def get_ai_response(messages: List[Dict[str, str]]) -> str:
+    """Send the current conversation to Gemini and return clean text."""
     history = build_gemini_history(messages)
+
+    if not history:
+        return "Please enter a classroom-related question."
 
     response = client.models.generate_content(
         model=MODEL_NAME,
         contents=history,
         config=types.GenerateContentConfig(
             system_instruction=SYSTEM_INSTRUCTION,
-            max_output_tokens=700,
-            temperature=0.4,
+            max_output_tokens=MAX_OUTPUT_TOKENS,
+            temperature=TEMPERATURE,
         ),
     )
 
-    if not response.text:
-        return (
-            "I couldn't generate a response right now. "
-            "Please try again."
-        )
+    text = getattr(response, "text", None)
+    if not text or not text.strip():
+        return "I couldn't generate a response right now. Please try again."
 
-    return response.text.strip()
+    return text.strip()
+
+
+@st.cache_data(show_spinner=False, max_entries=30)
+def text_to_speech(text: str, language: str = "en") -> Optional[bytes]:
+    """Convert response text to MP3 bytes and cache repeated requests."""
+    if not text.strip():
+        return None
+
+    try:
+        # Keep extremely long responses from creating oversized audio requests.
+        spoken_text = text[:4000]
+        tts = gTTS(text=spoken_text, lang=language, slow=False)
+        audio_buffer = io.BytesIO()
+        tts.write_to_fp(audio_buffer)
+        return audio_buffer.getvalue()
+    except Exception as error:
+        print(f"TTS error: {error}")
+        return None
+
+
+def clear_chat() -> None:
+    st.session_state.messages = [
+        {
+            "role": "assistant",
+            "content": (
+                "👋 **Chat cleared.**\n\n"
+                "What would you like to analyze in your classroom?"
+            ),
+        }
+    ]
+    st.session_state.last_response_audio = None
+    st.session_state.last_response_text = ""
+
+
+def submit_question(question: str) -> None:
+    """Put a suggested question into the pending input state."""
+    question = question.strip()
+    if question:
+        st.session_state.pending_question = question
 
 
 # ============================================================
@@ -190,9 +213,8 @@ def get_ai_response(messages):
 # ============================================================
 
 st.title("🤖 EduVision AI Assistant")
-
 st.caption(
-    "Your classroom assistant for attendance, performance, "
+    "Your intelligent classroom assistant for attendance, performance, "
     "notes, reports, and educational analytics."
 )
 
@@ -202,52 +224,38 @@ st.caption(
 # ============================================================
 
 with st.sidebar:
-
     st.header("⚙️ AI Assistant")
-
-    st.write(
-        "Ask EduVision AI questions using text or your voice."
-    )
+    st.write("Ask EduVision AI using text or your voice.")
 
     st.divider()
-
-    st.subheader("💡 Example Questions")
+    st.subheader("💡 Quick Questions")
 
     example_questions = [
         "How can I improve student attendance?",
         "How should I identify students who need support?",
-        "Summarize today's classroom performance.",
+        "Summarize the classroom performance data.",
         "What are effective ways to track student progress?",
-        "How can I use OCR notes for revision?",
+        "How can I use my notes for revision?",
     ]
 
-    for question in example_questions:
-        st.caption(f"• {question}")
+    for index, question in enumerate(example_questions):
+        if st.button(
+            question,
+            key=f"example_question_{index}",
+            use_container_width=True,
+        ):
+            submit_question(question)
+            st.rerun()
 
     st.divider()
 
-    if st.button(
-        "🗑️ Clear Chat",
-        use_container_width=True,
-    ):
-        st.session_state.messages = [
-            {
-                "role": "assistant",
-                "content": (
-                    "👋 Chat cleared. "
-                    "How can I help with your classroom?"
-                ),
-            }
-        ]
-
+    if st.button("🗑️ Clear Chat", use_container_width=True):
+        clear_chat()
         st.rerun()
 
     st.divider()
-
-    st.caption(
-        "🔐 Gemini API key is loaded securely from "
-        "Streamlit secrets."
-    )
+    st.caption("🔐 Gemini API key is loaded from Streamlit secrets.")
+    st.caption(f"🧠 Model: {MODEL_NAME}")
 
 
 # ============================================================
@@ -265,48 +273,50 @@ voice_text = speech_to_text(
     key="voice_input",
 )
 
+if voice_text:
+    st.info(f"Voice question: {voice_text}")
+
 
 # ============================================================
-# DISPLAY CHAT HISTORY
+# CHAT HISTORY
 # ============================================================
 
 st.subheader("💬 Chat")
 
 for message in st.session_state.messages:
+    role = message.get("role", "assistant")
+    content = message.get("content", "")
 
-    with st.chat_message(message["role"]):
-
-        st.markdown(message["content"])
-
-
-# ============================================================
-# USER INPUT
-# ============================================================
-
-text_input = st.chat_input(
-    "Ask EduVision AI something..."
-)
-
-# Prefer typed input if both happen at the same time
-user_query = text_input or voice_text
+    with st.chat_message(role):
+        st.markdown(content)
 
 
 # ============================================================
-# PROCESS USER QUERY
+# INPUT
+# ============================================================
+
+pending_question = st.session_state.pop("pending_question", "")
+text_input = st.chat_input("Ask EduVision AI something...")
+
+# Typed input wins if both are available.
+user_query = text_input or voice_text or pending_question
+
+
+# ============================================================
+# PROCESS QUERY
 # ============================================================
 
 if user_query:
-
     user_query = user_query.strip()
 
     if not user_query:
         st.warning("Please enter a question.")
         st.stop()
 
-
-    # --------------------------------------------------------
-    # SAVE USER MESSAGE
-    # --------------------------------------------------------
+    # Prevent accidental processing of an identical query if the page is rerun.
+    last_message = st.session_state.messages[-1] if st.session_state.messages else {}
+    if last_message.get("role") == "user" and last_message.get("content") == user_query:
+        st.stop()
 
     st.session_state.messages.append(
         {
@@ -315,71 +325,43 @@ if user_query:
         }
     )
 
-
-    # --------------------------------------------------------
-    # DISPLAY USER MESSAGE
-    # --------------------------------------------------------
-
     with st.chat_message("user"):
-
         st.markdown(user_query)
 
-
-    # --------------------------------------------------------
-    # GENERATE AI RESPONSE
-    # --------------------------------------------------------
-
     with st.chat_message("assistant"):
-
         with st.spinner("🤔 EduVision AI is thinking..."):
-
             try:
-
-                response_text = get_ai_response(
-                    st.session_state.messages
-                )
-
+                response_text = get_ai_response(st.session_state.messages)
             except Exception as error:
-
-                # Print the technical error in the terminal
-                # during development, but don't expose it to users.
-                print(
-                    f"Gemini API error: {error}"
-                )
-
+                # Keep technical details out of the UI.
+                print(f"Gemini API error: {error}")
                 response_text = (
-                    "⚠️ I couldn't connect to the AI service "
-                    "right now.\n\n"
-                    "Please check your Gemini API key, "
-                    "internet connection, and API configuration."
+                    "⚠️ **I couldn't connect to the AI service.**\n\n"
+                    "Please check your Gemini API key, internet connection, "
+                    "and API configuration, then try again."
                 )
-
-
-        # ----------------------------------------------------
-        # DISPLAY RESPONSE
-        # ----------------------------------------------------
 
         st.markdown(response_text)
 
+        st.session_state.last_response_text = response_text
+        st.session_state.last_response_audio = None
 
-        # ----------------------------------------------------
-        # TEXT TO SPEECH
-        # ----------------------------------------------------
+        # Generate audio only when requested instead of making a TTS network
+        # request after every AI response.
+        if st.button("🔊 Read this answer aloud", key="read_latest_answer"):
+            with st.spinner("Generating audio..."):
+                audio_bytes = text_to_speech(response_text)
 
-        audio = text_to_speech(response_text)
+            if audio_bytes:
+                st.session_state.last_response_audio = audio_bytes
+            else:
+                st.warning("I couldn't generate audio for this answer.")
 
-        if audio is not None:
-
+        if st.session_state.last_response_audio:
             st.audio(
-                audio,
+                st.session_state.last_response_audio,
                 format="audio/mp3",
-                autoplay=True,
             )
-
-
-    # --------------------------------------------------------
-    # SAVE ASSISTANT RESPONSE
-    # --------------------------------------------------------
 
     st.session_state.messages.append(
         {
