@@ -4,7 +4,7 @@ OCR Notes Page
 Allows users to:
 
 1. Upload an image.
-2. Extract text using Tesseract OCR.
+2. Extract text using EasyOCR.
 3. Review and edit the extracted text.
 4. Save the OCR result as a note.
 5. Display previously saved OCR notes.
@@ -29,7 +29,7 @@ if str(SRC_DIR) not in sys.path:
 # ===========================================================================
 
 import streamlit as st
-import pytesseract
+import easyocr
 from PIL import Image
 
 from utils.data_manager import (
@@ -38,15 +38,9 @@ from utils.data_manager import (
 )
 
 
-# ===========================================================================
-# Page configuration
-# ===========================================================================
-
-st.set_page_config(
-    page_title="OCR Notes",
-    page_icon="📝",
-    layout="wide",
-)
+# NOTE:
+# st.set_page_config() is NOT called here.
+# app.py already calls it once for the whole multipage app.
 
 
 # ===========================================================================
@@ -62,18 +56,38 @@ st.write(
 
 
 # ===========================================================================
-# Check Tesseract
+# EasyOCR Reader
 # ===========================================================================
 
-def check_tesseract() -> bool:
-    """Check whether Tesseract OCR is available."""
+@st.cache_resource
+def get_ocr_reader(language):
+    """
+    Create and cache an EasyOCR reader.
 
-    try:
-        pytesseract.get_tesseract_version()
-        return True
+    EasyOCR uses:
+        en = English
+        ar = Arabic
 
-    except Exception:
-        return False
+    For English + Arabic:
+        ["en", "ar"]
+    """
+
+    if language == "eng":
+        languages = ["en"]
+
+    elif language == "ara":
+        languages = ["ar"]
+
+    elif language == "eng+ara":
+        languages = ["en", "ar"]
+
+    else:
+        languages = ["en"]
+
+    return easyocr.Reader(
+        languages,
+        gpu=False,
+    )
 
 
 # ===========================================================================
@@ -102,11 +116,17 @@ if uploaded_file is not None:
     # -----------------------------------------------------------------------
 
     try:
+
         image = Image.open(uploaded_file)
 
     except Exception as e:
-        st.error(f"Could not open the uploaded image: {e}")
+
+        st.error(
+            f"Could not open the uploaded image: {e}"
+        )
+
         st.stop()
+
 
     # -----------------------------------------------------------------------
     # Display image
@@ -119,6 +139,7 @@ if uploaded_file is not None:
         use_container_width=True,
     )
 
+
     # -----------------------------------------------------------------------
     # OCR language
     # -----------------------------------------------------------------------
@@ -127,18 +148,22 @@ if uploaded_file is not None:
 
     language = st.selectbox(
         "OCR Language",
+
         options=[
             "eng",
             "ara",
             "eng+ara",
         ],
+
         format_func=lambda lang: {
             "eng": "English",
             "ara": "Arabic",
             "eng+ara": "English + Arabic",
         }[lang],
+
         index=0,
     )
+
 
     # -----------------------------------------------------------------------
     # Extract button
@@ -150,58 +175,74 @@ if uploaded_file is not None:
         use_container_width=True,
     ):
 
-        # Check Tesseract installation
-        if not check_tesseract():
-            st.error(
-                "Tesseract OCR is not installed or cannot be found. "
-                "Please install Tesseract and make sure it is available "
-                "in your PATH."
-            )
+        with st.spinner(
+            "Loading OCR model and extracting text..."
+        ):
 
-        else:
+            try:
 
-            with st.spinner("Extracting text..."):
+                # -----------------------------------------------------------
+                # Convert PIL image to RGB
+                # -----------------------------------------------------------
 
-                try:
+                image_rgb = image.convert("RGB")
 
-                    extracted_text = pytesseract.image_to_string(
-                        image,
-                        lang=language,
+
+                # -----------------------------------------------------------
+                # Get OCR reader
+                # -----------------------------------------------------------
+
+                reader = get_ocr_reader(language)
+
+
+                # -----------------------------------------------------------
+                # Run OCR
+                # -----------------------------------------------------------
+
+                results = reader.readtext(
+                    image_rgb,
+                    detail=0,
+                    paragraph=True,
+                )
+
+
+                # -----------------------------------------------------------
+                # Combine OCR results
+                # -----------------------------------------------------------
+
+                extracted_text = "\n".join(
+                    str(text).strip()
+                    for text in results
+                    if str(text).strip()
+                ).strip()
+
+
+                # -----------------------------------------------------------
+                # OCR result
+                # -----------------------------------------------------------
+
+                if extracted_text:
+
+                    st.session_state["ocr_text"] = extracted_text
+
+                    st.success(
+                        "✅ Text extracted successfully!"
                     )
 
-                    extracted_text = extracted_text.strip()
+                else:
 
-                    # -------------------------------------------------------
-                    # OCR result
-                    # -------------------------------------------------------
+                    st.session_state["ocr_text"] = ""
 
-                    if extracted_text:
-
-                        st.session_state["ocr_text"] = extracted_text
-
-                        st.success(
-                            "✅ Text extracted successfully!"
-                        )
-
-                    else:
-
-                        st.session_state["ocr_text"] = ""
-
-                        st.warning(
-                            "⚠️ No text was detected in the image."
-                        )
-
-                except pytesseract.TesseractError as e:
-
-                    st.error(
-                        f"Tesseract OCR error: {e}"
+                    st.warning(
+                        "⚠️ No text was detected in the image."
                     )
 
-                except Exception as e:
 
-                    st.error(
-                        f"OCR failed: {e}"
-                    )
+            except Exception as e:
+
+                st.error(
+                    f"❌ OCR failed: {e}"
+                )
 
 
 # ===========================================================================
@@ -217,18 +258,23 @@ if (
 
     st.subheader("📄 Extracted Text")
 
+
     # -----------------------------------------------------------------------
     # Text editor
     # -----------------------------------------------------------------------
 
     edited_text = st.text_area(
         "Review or edit the extracted text",
+
         value=st.session_state["ocr_text"],
+
         height=300,
     )
 
+
     # Keep edited version in session state
     st.session_state["ocr_text"] = edited_text
+
 
     # -----------------------------------------------------------------------
     # Note title
@@ -236,9 +282,12 @@ if (
 
     note_title = st.text_input(
         "Note title",
+
         value="OCR Note",
+
         placeholder="Enter a title for this note",
     )
+
 
     # -----------------------------------------------------------------------
     # Save note
@@ -246,11 +295,14 @@ if (
 
     if st.button(
         "💾 Save Note",
+
         use_container_width=True,
     ):
 
         cleaned_text = edited_text.strip()
+
         cleaned_title = note_title.strip()
+
 
         if not cleaned_text:
 
@@ -263,21 +315,26 @@ if (
             try:
 
                 save_ocr_note(
-                    title=cleaned_title or "OCR Note",
-                    content=cleaned_text,
+                    subject=cleaned_title or "OCR Note",
+
+                    extracted_text=cleaned_text,
                 )
+
 
                 st.success(
                     "✅ OCR note saved successfully!"
                 )
 
-                # Clear the current OCR text after saving
+
+                # Clear current OCR text after saving
                 st.session_state.pop(
                     "ocr_text",
                     None,
                 )
 
+
                 st.rerun()
+
 
             except Exception as e:
 
@@ -299,18 +356,20 @@ try:
 
     notes = load_ocr_notes()
 
+
     # -----------------------------------------------------------------------
     # No notes
     # -----------------------------------------------------------------------
 
-    if not notes:
+    if notes.empty:
 
         st.info(
             "No OCR notes saved yet."
         )
 
+
     # -----------------------------------------------------------------------
-    # Display notes
+    # Display notes (most recent first)
     # -----------------------------------------------------------------------
 
     else:
@@ -319,53 +378,50 @@ try:
             f"**{len(notes)} note(s) saved**"
         )
 
+
         for index, note in enumerate(
-            reversed(notes),
+            notes.iloc[::-1].itertuples(),
             start=1,
         ):
 
-            # ---------------------------------------------------------------
-            # Handle dictionary notes
-            # ---------------------------------------------------------------
-
-            if isinstance(note, dict):
-
-                title = note.get(
-                    "title",
-                    f"OCR Note {index}",
+            title = (
+                getattr(
+                    note,
+                    "subject",
+                    None,
                 )
+                or f"OCR Note {index}"
+            )
 
-                content = note.get(
-                    "content",
-                    note.get(
-                        "text",
-                        "",
-                    ),
-                )
 
-            # ---------------------------------------------------------------
-            # Handle unexpected note format
-            # ---------------------------------------------------------------
+            content = getattr(
+                note,
+                "extracted_text",
+                "",
+            )
 
-            else:
 
-                title = f"OCR Note {index}"
-                content = str(note)
+            timestamp = getattr(
+                note,
+                "timestamp",
+                "",
+            )
 
-            # ---------------------------------------------------------------
-            # Display note
-            # ---------------------------------------------------------------
 
             with st.expander(
-                f"📝 {title}",
+                f"📝 {title} — {timestamp}",
                 expanded=False,
             ):
 
                 st.text_area(
                     "Note content",
+
                     value=str(content),
+
                     height=200,
+
                     key=f"saved_note_{index}",
+
                     disabled=True,
                 )
 

@@ -42,15 +42,8 @@ from utils.data_manager import (
 )
 
 
-# ---------------------------------------------------------------------------
-# Page configuration
-# ---------------------------------------------------------------------------
-
-st.set_page_config(
-    page_title="Reports",
-    page_icon="📊",
-    layout="wide",
-)
+# NOTE: st.set_page_config() is NOT called here — app.py already calls
+# it once for the whole multipage app.
 
 st.title("📊 Reports")
 

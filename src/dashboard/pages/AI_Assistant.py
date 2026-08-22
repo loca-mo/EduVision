@@ -8,15 +8,8 @@ from google import genai
 from google.genai import types
 
 
-# ============================================================
-# PAGE CONFIG
-# ============================================================
-
-st.set_page_config(
-    page_title="EduVision AI Assistant",
-    page_icon="🤖",
-    layout="wide",
-)
+# NOTE: st.set_page_config() is NOT called here — app.py already calls
+# it once for the whole multipage app.
 
 
 # ============================================================
